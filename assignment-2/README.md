@@ -22,9 +22,9 @@ IP addresses are hard-coded in main().
 
 ## High-Level Summary
 ### TCP Flow
-- New flows were created by parsing packets and identifying 3-way TCP handshakes.
-- Flows were uniquely identified by using a TCP 4-tuple (source ip, source port, destination ip, destination port).
-- After a flow was identified, the first two packets with data were recorded.
+- New flows are created by parsing packets and identifying 3-way TCP handshakes.
+- Flows are uniquely identified by using a TCP 4-tuple (source ip, source port, destination ip, destination port).
+- After a flow is identified, the first two packets with data are recorded.
 - Throughput is calculated by storing the number of total bytes sent in a flow then dividing by the lifespan of the flow.
 
 ### Congestion Control
