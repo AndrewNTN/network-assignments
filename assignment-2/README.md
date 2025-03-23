@@ -32,3 +32,6 @@ IP addresses are hard-coded in main().
   - RTT = (1-α) (RTT) + α (new_sample)
 - The initial RTT estimation is the RTT from the 3-way TCP handshake (from SYN to SYN-ACK).
 - RTT samples are taken every time a new ACK is received by keeping track of sequence numbers and their send time.
+  - Sequence numbers are kept track by the ACK expected to be received from the server for that sequence number.
+- Retransmissions are detected when the sender resends an unacknowledged sequence number. 
+- If the time elapsed from sending the original sequence number exceeds 2 * RTT', then it is treated as a timeout retransmission. If not, it is treated as a triple ACK retransmission.

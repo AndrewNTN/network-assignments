@@ -60,7 +60,7 @@ def parse_pcap(pcap_file_name, sender_ip, receiver_ip):
                     "rtt_estimate": None,
                     "next_rtt_estimate": None,
                     "curr_rtt_sample": None,
-                    "unacked_seq_nums": defaultdict(float),  # seq nums, sequence num : time sent
+                    "expected_ack": defaultdict(tuple),  # expected ack: (time sent, sequence number)
                     "cwnd_size_list": [],
                     "last_rtt_update": None,
                     "rtt_window_packets": set()
@@ -84,7 +84,7 @@ def parse_pcap(pcap_file_name, sender_ip, receiver_ip):
                         tcp.flags & dpkt.tcp.TH_SYN):  # ACK only from sender, no SYN flag
                     tcp_flows[tcp_tuple]["handshake_complete"] = True
 
-            # RTT and congestion window
+            # congestion analysis
             if tcp_tuple in tcp_flows and tcp_flows[tcp_tuple]["handshake_complete"]:
                 # check if curr RTT is exceeded
                 if (tcp_flows[tcp_tuple]["rtt_estimate"] is not None and
@@ -101,18 +101,32 @@ def parse_pcap(pcap_file_name, sender_ip, receiver_ip):
                     tcp_flows[tcp_tuple]["last_rtt_update"] = ts
                     tcp_flows[tcp_tuple]["rtt_window_packets"].clear()
 
+                # process data packets from sender
                 if src_ip == sender_ip and len(tcp.data) > 0:
-                    # track seq num and send time
-                    tcp_flows[tcp_tuple]["unacked_seq_nums"][tcp.seq] = ts
+                    expected_ack = tcp.seq + len(tcp.data)
+
+                    # check if retransmission
+                    if expected_ack in tcp_flows[tcp_tuple]["expected_ack"]:
+                        time_sent = tcp_flows[tcp_tuple]["expected_ack"][expected_ack][0]
+
+                        # timeout retransmission
+                        if (ts - time_sent) > (2 * tcp_flows[tcp_tuple]["rtt_estimate"]):  # RTO = 2 * RTT'
+                            tcp_flows[tcp_tuple]["timeout_retransmits"] += 1
+                        else:  # triple ack retransmission
+                            tcp_flows[tcp_tuple]["triple_ack_retransmits"] += 1
+
+                    # record packet data
+                    tcp_flows[tcp_tuple]["expected_ack"][expected_ack] = (ts, tcp.seq)
 
                     # add to current RTT window for cwnd calculation
                     tcp_flows[tcp_tuple]["rtt_window_packets"].add(tcp.seq)
 
                 # process ACK packets from receiver
                 elif src_ip == receiver_ip and (tcp.flags & dpkt.tcp.TH_ACK) and not (tcp.flags & dpkt.tcp.TH_SYN):
-                    if tcp.ack in tcp_flows[tcp_tuple]["unacked_seq_nums"]:
+                    # successful seq/ack pair
+                    if tcp.ack in tcp_flows[tcp_tuple]["expected_ack"]:
                         # calculate new RTT sample from this ACK
-                        send_time = tcp_flows[tcp_tuple]["unacked_seq_nums"][tcp.ack]
+                        send_time = tcp_flows[tcp_tuple]["expected_ack"][tcp.ack][0]
                         rtt_sample = ts - send_time
                         tcp_flows[tcp_tuple]["curr_rtt_sample"] = rtt_sample
 
@@ -125,8 +139,8 @@ def parse_pcap(pcap_file_name, sender_ip, receiver_ip):
                                                                          tcp_flows[tcp_tuple][
                                                                              "next_rtt_estimate"] + alpha * rtt_sample)
 
-                        # remove ACKed sequence number
-                        del tcp_flows[tcp_tuple]["unacked_seq_nums"][tcp.ack]
+                        # expected ACK has arrived, remove from expected list
+                        del tcp_flows[tcp_tuple]["expected_ack"][tcp.ack]
 
             if tcp_tuple in tcp_flows and tcp_flows[tcp_tuple]["handshake_complete"]:
                 # store first 2 transactions after handshake is completed
@@ -169,7 +183,7 @@ def main():
           f"-------------------------------------------------")
     for flow in tcp_flows:
         print(
-            f"[Flow]\n"
+            f"[TCP Flow]\n"
             f"[Sender IP]: {flow[0]} [Sender Port]: {flow[1]}\n[Receiver IP]: {flow[2]} [Receiver Port]: {flow[3]}")
         for i, transaction in enumerate(tcp_flows[flow]["first_two_transactions"], 1):
             print(f"    [Transaction {i}]:\n"
@@ -193,6 +207,8 @@ def main():
             print(f"Flow was incomplete.\n")
 
         print(f"    [First 3 congestion window sizes]: {tcp_flows[flow]['cwnd_size_list'][0:3]}")
+        print(f"    [Number of Triple ACK Retransmissions]: {tcp_flows[flow]['triple_ack_retransmits']}")
+        print(f"    [Number of Timeout Retransmissions]: {tcp_flows[flow]['timeout_retransmits']}\n")
 
 
 if __name__ == "__main__":
