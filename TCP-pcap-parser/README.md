@@ -26,6 +26,8 @@ IP addresses are hard-coded in main().
 - Flows are uniquely identified by using a TCP 4-tuple (source ip, source port, destination ip, destination port).
 - After a flow is identified, the first two packets with data are recorded.
 - Throughput is calculated by storing the number of total bytes sent in a flow then dividing by the lifespan of the flow.
+- The window scale factor is obtained through the header and the receive window is calculated using the formula
+  - TCP window size = TCP window size in bytes * (2^scale factor)
 
 ### Congestion Control
 - The congestion window is estimated by tracking unacknowledged packets within each estimated RTT period, with the RTT estimate being updated at the conclusion of each window using the EWMA formula.
