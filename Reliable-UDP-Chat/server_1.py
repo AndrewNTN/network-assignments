@@ -20,7 +20,7 @@ class Server:
         self.sock.settimeout(None)
         self.sock.bind((self.server_addr, self.server_port))
 
-        self.clients = {}  # conn_socket : Username
+        self.clients = {}  # username : addr
 
     def start(self):
         '''
@@ -29,37 +29,108 @@ class Server:
         '''
 
         while True:
-            try:
-                # wait for a client connection
-                conn_socket, addr = self.sock.accept()
+            # wait for a client message
+            message, addr = self.sock.recvfrom(4096)
 
-                # get message
-                message = conn_socket.recv(4096).decode()
+            # handle message
+            if message:
+                message = message.decode()
+                self.handle_message(message, addr)
 
-                # handle message
-                if message:
-                    self.handle_message(message, conn_socket)
-
-            except Exception as e:
-                print(f"Error: {e}")
-
-    def handle_message(self, message, conn_socket):
+    def handle_message(self, message, addr):
         msg_type, seqno, data, checksum = util.parse_packet(message)
+        msg_parts = data.split()
+        cmd = msg_parts[0]
 
-        if data == "disconnect":
-            print(f"disconnected: {self.clients[conn_socket]}")
-            del self.clients[conn_socket]
+        if cmd == "disconnect":
+            self.delete_client(msg_parts, addr)
+        elif cmd == "join":
+            self.add_client(msg_parts, addr)
+        elif cmd == "send_message":
+            self.send_chat_msg(msg_parts, addr)
+        elif cmd == "request_users_list":
+            self.send_users_list(addr)
+        else:
+            self.unknown_cmd(addr)
 
-    def add_client(self, client_name, conn_socket):
+    def unknown_cmd(self, addr):
+        # get username from address
+        username = None
+        for name, stored_addr in self.clients.items():
+            if stored_addr == addr:
+                username = name
+
+        if username:
+            self.send_msg("err_unknown_message", 2, addr)
+
+            # disconnect client
+            del self.clients[username]
+            print(f"disconnected: {username} sent unknown command")
+
+    def delete_client(self, msg_parts):
+        username = msg_parts[2]
+
+        # ensure user exists
+        if username in self.clients.keys():
+            del self.clients[username]
+            print(f"disconnected: {username}")
+
+    def add_client(self, msg_parts, addr):
+        username = msg_parts[2]
+
+        # check for max number of clients
         if len(self.clients) >= util.MAX_NUM_CLIENTS:
-            # send client disconnected: full
-            pass
+            self.send_msg("err_server_full", 2, addr)
+            print(f"disconnected: server full")
 
-        if client_name in self.clients.values():
-            # send client disconnected: username not available
-            pass
+        # check if username already exists
+        if username in self.clients.keys():
+            self.send_msg("err_username_unavailable", 2, addr)
+            print(f"disconnected: username not available")
 
-        self.clients[client_name] = conn_socket
+        self.clients[username] = addr
+        print(f"join: {username}")
+
+    def send_users_list(self, addr):
+        # ensure user exists
+        username = None
+        for name, stored_addr in self.clients.items():
+            if stored_addr == addr:
+                username = name
+
+        if username:
+            name_list = sorted(self.clients.keys())
+            response_str = f"{len(name_list)} {' '.join(name_list)}"
+            self.send_msg("response_users_list", 3, addr, response_str)
+            print(f"request_users_list: {username}")
+
+    def send_chat_msg(self, msg_parts, addr):
+        # ensure sender exists
+        sender_name = None
+        for name, stored_addr in self.clients.items():
+            if stored_addr == addr:
+                sender_name = name
+
+        if sender_name:
+            print(f"msg: {sender_name}")
+
+            num_recv = int(msg_parts[2])
+            recipients = msg_parts[3:3 + num_recv]
+            msg = " ".join(msg_parts[3 + num_recv:])
+
+            # deliver msg to each recipient
+            for recipient in recipients:
+                # ensure recipient exists and get address
+                recv_addr = self.clients.get(recipient)
+                if recv_addr:
+                    self.send_msg("forward_message", 4, recv_addr, msg)
+                else:
+                    print(f"msg: {sender_name} to non-existent user {recipient}")
+
+    def send_msg(self, msg_type, msg_format, addr, message=None):
+        msg = util.make_message(msg_type, msg_format, message=message)
+        packet = util.make_packet(msg=msg)
+        self.sock.sendto(packet.encode(), addr)
 
 
 # Do not change below part of code
