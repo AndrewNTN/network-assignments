@@ -25,6 +25,7 @@ class Client:
     def __init__(self, username, dest, port, window_size):
         self.server_addr = dest
         self.server_port = port
+        self.send_addr = (self.server_addr, self.server_port)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(None)
         self.sock.bind(('', random.randint(10000, 40000)))
@@ -37,13 +38,124 @@ class Client:
         Use make_message() and make_util() functions from util.py to make your first join packet
         Waits for userinput and then process it
         '''
-        raise NotImplementedError  # remove it once u start your implementation
+
+        # send join message to server
+        util.send_msg(self.sock, "join", 1, self.send_addr, message=self.name)
+
+        while True:
+            # get user input
+            msg = input()
+            if msg:
+                self.handle_message(msg)
+
+    def handle_message(self, msg):
+        # extract command and handle accordingly
+        msg_parts = msg.split()
+        cmd = msg_parts[0]
+
+        if cmd == "msg":
+            self.chat(msg_parts)
+        elif cmd == "list":
+            self.list()
+        elif cmd == "help":
+            self.help()
+        elif cmd == "quit":
+            self.quit()
+            sys.exit(0)
+        else:
+            print("incorrect userinput format")
 
     def receive_handler(self):
         '''
         Waits for a message from server and process it accordingly
         '''
-        raise NotImplementedError  # remove it once u start your implementation
+
+        while True:
+            # wait for server message
+            message, addr = self.sock.recvfrom(4096)
+
+            # handle message
+            if message:
+                message = message.decode()
+                self.handle_server_msg(message)
+
+    def handle_server_msg(self, message):
+        msg_type, seqno, data, checksum = util.parse_packet(message)
+
+        # extract command and handle accordingly
+        msg_parts = data.split()
+        res = msg_parts[0]
+
+        if res == "response_users_list":
+            self.users_list_res(msg_parts)
+        elif res == "forward_message":
+            self.fwd_message(msg_parts)
+        elif res == "err_username_unavailable":
+            print("disconnected: username not available")
+            sys.exit(0)
+        elif res == "err_server_full":
+            print("disconnected: server full")
+            sys.exit(0)
+        elif res == "err_unknown_message":
+            print("disconnected: server received an unknown command")
+            sys.exit(0)
+
+    def chat(self, msg_parts):
+        # ensure correct formatting
+        if len(msg_parts) < 3:  # need msg cmd, a user, and msg at least
+            print("incorrect userinput format")
+            return
+
+        num_recv = msg_parts[1]
+        if num_recv.isdigit():
+            num_recv = int(num_recv)
+        else:
+            print("incorrect userinput format")
+            return
+
+        if (num_recv < 1  # ensure at least 1 recipient
+                or len(msg_parts) < num_recv + 3):  # ensure recipients are named
+            print("incorrect userinput format")
+            return
+
+        recipients = msg_parts[2: 2 + num_recv]
+        message = " ".join(msg_parts[2 + num_recv:])
+
+        # send msg to server
+        msg_formatted = f"{num_recv} {' '.join(recipients)} {message}"
+        util.send_msg(self.sock, "send_message", 4, self.send_addr, message=msg_formatted)
+
+    def list(self):
+        # provie user with list of connected users
+        util.send_msg(self.sock, "request_users_list", 2, self.send_addr)
+
+    def help(self):
+        # provide user with list of commands
+        print("List of Commands:\n"
+              "msg <number_of_users> <username1> <username2> … <message>\n"
+              "list\n"
+              "help\n"
+              "quit\n")
+
+    def quit(self):
+        # send quit message
+        util.send_msg(self.sock, "disconnect", 1,
+                      self.send_addr, message=self.name)
+        print("quitting")
+
+    def users_list_res(self, msg_parts):
+        # display users list response from server
+        num_users = int(msg_parts[2])
+        user_list = msg_parts[3:3 + num_users]
+
+        print(f"list: {' '.join(user_list)}")
+
+    def fwd_message(self, msg_parts):
+        # display fwd msg to user
+        sender_name = msg_parts[3]
+        msg = " ".join(msg_parts[4:])
+
+        print(f"msg: {sender_name}: {msg}")
 
 
 # Do not change below part of code

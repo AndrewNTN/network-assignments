@@ -4,8 +4,9 @@ This file contains basic utility functions that you can use and can also make yo
 import binascii
 
 MAX_NUM_CLIENTS = 10
-TIME_OUT = 0.5 # 500ms
-CHUNK_SIZE = 1400 # 1400 Bytes
+TIME_OUT = 0.5  # 500ms
+CHUNK_SIZE = 1400  # 1400 Bytes
+
 
 def validate_checksum(message):
     '''
@@ -66,3 +67,9 @@ def make_message(msg_type, msg_format, message=None):
         msg_len = len(message)
         return "%s %d %s" % (msg_type, msg_len, message)
     return ""
+
+
+def send_msg(sock, msg_type, msg_format, addr, message=None):
+    msg = make_message(msg_type, msg_format, message=message)
+    packet = make_packet(msg=msg)
+    sock.sendto(packet.encode(), addr)
