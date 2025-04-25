@@ -107,7 +107,7 @@ def send_and_wait_ack(sock, packet, send_addr, seqno):
         try:
             res, _ = sock.recvfrom(4096)
             res_type, res_seq, res_data, _ = parse_packet(res.decode())
-            print(f"ACK_SEQNUM: {res_seq}, SEQNO+1: {seqno + 1}")
+            # print(f"ACK_SEQNUM: {res_seq}, SEQNO+1: {seqno + 1}") # debug statement
             if res_type == "ack" and res_seq.isdigit() and int(res_seq) == seqno + 1:
                 break  # successfully sent
         except socket.timeout:
@@ -119,46 +119,49 @@ def send_and_wait_ack(sock, packet, send_addr, seqno):
 
 def receive_msg(sock, buffers):
     try:
-        # receive packet
-        packet, addr = sock.recvfrom(4096)
-        packet = packet.decode()
+        # peek so we don't remove an ACK, leave it for the other recv
+        packet_peek, addr = sock.recvfrom(4096, socket.MSG_PEEK)
+        packet_str = packet_peek.decode()
     except socket.timeout:
         return None, None, None
 
-    # verify checksum and skip if invalid
+    # validate checksum
+    if not validate_checksum(packet_str):
+        sock.recvfrom(4096)  # consume invalid packet
+        return None, None, None
+
+    msg_type, seq_str, data, _ = parse_packet(packet_str)
+    if msg_type == "ack":
+        # leave it on the socket for send_and_wait_ack
+        return None, None, None
+
+    # it's not an ack, handle as normal
+    packet, addr = sock.recvfrom(4096)
+    packet = packet.decode()
     if not validate_checksum(packet):
         return None, None, None
 
-    # parse packet
-    msg_type, seq_str, data, checksum = parse_packet(packet)
+    msg_type, seq_str, data, _ = parse_packet(packet)
     seq = int(seq_str)
+    buffer = buffers.setdefault(addr, {"chunks": [], "expected": seq})
 
-    if msg_type == "start" or msg_type == "data" or msg_type == "end":
-        buffer = buffers.setdefault(addr, {"chunks": [], "expected": seq})
+    if msg_type == "start":
+        buffer["expected"] += 1
+        ack = make_packet("ack", buffer["expected"])
+        sock.sendto(ack.encode(), addr)
 
-        # send acks
-        if msg_type == "start":
-            print(f"START: {seq}")
-            buffer["expected"] += 1
-            ack = make_packet("ack", buffer["expected"])
-            sock.sendto(ack.encode(), addr)
+    elif msg_type == "data":
+        buffer["chunks"].append(data)
+        buffer["expected"] += 1
+        ack = make_packet("ack", buffer["expected"])
+        sock.sendto(ack.encode(), addr)
 
-        elif msg_type == "data":
-            print(f"DATA: {seq}")
-            buffer["chunks"].append(data)
-            buffer["expected"] += 1
-            ack = make_packet("ack", buffer["expected"])
-            sock.sendto(ack.encode(), addr)
-
-        else:  # end
-            print(f"END: {seq}")
-            buffer["expected"] += 1
-            ack = make_packet("ack", buffer["expected"])
-            sock.sendto(ack.encode(), addr)
-
-            # put together message
-            message = "".join(buffer["chunks"])
-            buffers.pop(addr, None)
-            return message, addr, buffer["expected"]
+    elif msg_type == "end":
+        buffer["expected"] += 1
+        ack = make_packet("ack", buffer["expected"])
+        sock.sendto(ack.encode(), addr)
+        message = "".join(buffer["chunks"])
+        buffers.pop(addr, None)
+        return message, addr, buffer["expected"]
 
     return None, None, None
