@@ -122,7 +122,7 @@ def receive_msg(sock, buffers):
         # peek so we don't remove an ACK, leave it for the other recv
         packet_peek, addr = sock.recvfrom(4096, socket.MSG_PEEK)
         packet_str = packet_peek.decode()
-    except socket.timeout:
+    except (socket.timeout, BlockingIOError):
         return None, None, None
 
     # validate checksum
